@@ -3,6 +3,9 @@ name: Generate Video
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   generate-video:
     runs-on: ubuntu-latest
@@ -11,18 +14,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install FFmpeg and TTS
+      - name: Install FFmpeg and Python
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg python3 python3-pip
-          python3 -m pip install --upgrade pip --break-system-packages
-          python3 -m pip install edge-tts --break-system-packages
+          sudo apt-get install -y ffmpeg python3 python3-venv
 
-          echo "FFmpeg:"
+          python3 -m venv .venv
+
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install openai edge-tts
+
+          echo "FFmpeg installed:"
           ffmpeg -version | head -1
-
-          echo "TTS:"
-          python3 -m edge_tts --help
 
       - name: Generate AI script
         env:
@@ -31,69 +34,96 @@ jobs:
           set -e
 
           if [ -z "$OPENAI_API_KEY" ]; then
-            echo "OPENAI_API_KEY secret नहीं मिला"
+            echo "ERROR: OPENAI_API_KEY secret नहीं मिला."
             exit 1
           fi
 
-          python3 <<'PY'
+          .venv/bin/python <<'PY'
           import os
-          import json
-          import urllib.request
-          import urllib.error
+          from openai import OpenAI
 
-          api_key = os.environ["OPENAI_API_KEY"]
-
-          payload = {
-              "model": "gpt-5.6",
-              "input": "हिंदी में 30 सेकंड के वीडियो के लिए एक engaging voice-over script लिखो। केवल script दो।"
-          }
-
-          req = urllib.request.Request(
-              "https://api.openai.com/v1/responses",
-              data=json.dumps(payload).encode("utf-8"),
-              headers={
-                  "Content-Type": "application/json",
-                  "Authorization": f"Bearer {api_key}"
-              },
-              method="POST"
+          client = OpenAI(
+              api_key=os.environ["OPENAI_API_KEY"]
           )
 
-          try:
-              with urllib.request.urlopen(req, timeout=120) as response:
-                  result = json.loads(response.read().decode("utf-8"))
-          except urllib.error.HTTPError as e:
-              print(e.read().decode("utf-8"))
-              raise
+          response = client.responses.create(
+              model="gpt-5.5",
+              instructions=(
+                  "You write short, engaging Hindi scripts for YouTube Shorts. "
+                  "Return only the Hindi voice-over script. "
+                  "Do not add headings, markdown, emojis or explanations."
+              ),
+              input=(
+                  "एक engaging Hindi YouTube Shorts script लिखो। "
+                  "लगभग 30 से 45 सेकंड की हो। "
+                  "शुरुआत में strong hook हो और अंत में memorable line हो।"
+              )
+          )
 
-          script = result.get("output_text", "").strip()
+          script = response.output_text.strip()
 
           if not script:
-              print(json.dumps(result, ensure_ascii=False, indent=2))
-              raise RuntimeError("AI ने script नहीं दी")
+              raise RuntimeError("OpenAI ने खाली script दी.")
 
           with open("script.txt", "w", encoding="utf-8") as f:
               f.write(script)
 
-          print("===== SCRIPT =====")
+          print("===== GENERATED SCRIPT =====")
           print(script)
-          print("==================")
+          print("============================")
           PY
 
       - name: Create Hindi Voice
         run: |
-          python3 -m edge_tts \
-            --text "$(cat script.txt)" \
+          set -e
+
+          .venv/bin/edge-tts \
             --voice "hi-IN-MadhurNeural" \
+            --file script.txt \
             --write-media voice.mp3
 
-      - name: Check Output
-        run: |
-          ls -lh script.txt voice.mp3
+          test -s voice.mp3
 
-      - name: Upload Video Files
+          echo "Voice created successfully."
+          ls -lh voice.mp3
+
+      - name: Create Video Background
+        run: |
+          set -e
+
+          DURATION=$(
+            ffprobe \
+              -v error \
+              -show_entries format=duration \
+              -of default=noprint_wrappers=1:nokey=1 \
+              voice.mp3
+          )
+
+          echo "Audio duration: ${DURATION} seconds"
+
+          ffmpeg -y \
+            -f lavfi \
+            -i "color=c=black:s=1080x1920:r=30:d=${DURATION}" \
+            -i voice.mp3 \
+            -c:v libx264 \
+            -preset veryfast \
+            -pix_fmt yuv420p \
+            -c:a aac \
+            -b:a 192k \
+            -shortest \
+            -movflags +faststart \
+            video.mp4
+
+          test -s video.mp4
+
+          echo "Video created successfully."
+          ls -lh video.mp4
+
+      - name: Upload Generated Files
         uses: actions/upload-artifact@v4
         with:
-          name: generated-video-files
+          name: generated-video
           path: |
             script.txt
             voice.mp3
+            video.mp4
