@@ -1,156 +1,128 @@
-name: YouTube Automation
+name: YouTube Video Automation
 
 on:
   workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Video prompt"
+        required: true
+        default: "A cinematic futuristic city at night, neon lights, flying cars, realistic camera movement, dramatic atmosphere"
 
 jobs:
-  generate-script:
+  generate-video:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+      - name: Install tools
         run: |
-          python -m pip install --upgrade pip
-          pip install edge-tts requests
+          sudo apt-get update
+          sudo apt-get install -y jq curl
 
-      - name: Generate AI Script
+      - name: Generate Veo video
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VIDEO_PROMPT: ${{ inputs.prompt }}
         run: |
-          cat > generate_ai.py <<'PY'
-          import os
-          import time
-          import requests
+          set -e
 
-          api_key = os.environ.get("GEMINI_API_KEY")
+          BASE_URL="https://generativelanguage.googleapis.com/v1beta"
 
-          if not api_key:
-              raise Exception("GEMINI_API_KEY secret is missing.")
+          echo "Starting Veo 3.1 generation..."
 
-          prompt = """Create a 45 to 60 second YouTube Shorts script in Hindi.
-
-          Topic: Interesting facts about space.
-
-          Rules:
-          - Start with a strong hook.
-          - Use simple Hindi.
-          - Make it interesting and engaging.
-          - No headings.
-          - No emojis.
-          - End with a short call to action.
-          """
-
-          models = [
-              "gemini-3.7-flash",
-              "gemini-3.6-flash"
-          ]
-
-          script = None
-
-          for model in models:
-              print("Trying model:", model)
-
-              for attempt in range(5):
-                  print("Attempt:", attempt + 1)
-
-                  url = (
-                      "https://generativelanguage.googleapis.com/v1beta/"
-                      + "models/"
-                      + model
-                      + ":generateContent?key="
-                      + api_key
-                  )
-
-                  payload = {
-                      "contents": [
-                          {
-                              "parts": [
-                                  {
-                                      "text": prompt
-                                  }
-                              ]
-                          }
-                      ]
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "${BASE_URL}/models/veo-3.1-generate-preview:predictLongRunning" \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg prompt "$VIDEO_PROMPT" \
+              '{
+                instances: [
+                  {
+                    prompt: $prompt
                   }
+                ],
+                parameters: {
+                  aspectRatio: "9:16",
+                  resolution: "720p"
+                }
+              }'
+            )")
 
-                  try:
-                      response = requests.post(
-                          url,
-                          json=payload,
-                          timeout=60
-                      )
+          echo "API response:"
+          echo "$RESPONSE" | jq .
 
-                      print("HTTP Status:", response.status_code)
+          OPERATION_NAME=$(echo "$RESPONSE" | jq -r '.name // empty')
 
-                      if response.status_code == 200:
-                          data = response.json()
-                          script = data["candidates"][0]["content"]["parts"][0]["text"]
-                          print("SUCCESS!")
-                          break
+          if [ -z "$OPERATION_NAME" ]; then
+            echo "ERROR: Veo operation was not created."
+            exit 1
+          fi
 
-                      print("API error. Retrying...")
-                      time.sleep(10)
+          echo "Operation: $OPERATION_NAME"
 
-                  except Exception as error:
-                      print("Request error:", error)
-                      time.sleep(10)
+          echo "Waiting for video..."
 
-              if script:
-                  break
+          for i in {1..60}; do
 
-          if not script:
-              raise Exception("AI script generation failed.")
+            sleep 10
 
-          with open("script.txt", "w", encoding="utf-8") as file:
-              file.write(script)
+            STATUS=$(curl -sS \
+              -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+              "${BASE_URL}/${OPERATION_NAME}")
 
-          print("Script saved successfully.")
-          print(script)
-          PY
+            DONE=$(echo "$STATUS" | jq -r '.done // false')
 
-          python generate_ai.py
+            echo "Check $i/60 - done=$DONE"
 
-      - name: Generate Hindi Voice
+            if [ "$DONE" = "true" ]; then
+
+              ERROR=$(echo "$STATUS" | jq -r '.error.message // empty')
+
+              if [ -n "$ERROR" ]; then
+                echo "Veo generation failed:"
+                echo "$ERROR"
+                exit 1
+              fi
+
+              VIDEO_URI=$(echo "$STATUS" | jq -r \
+                '.response.generateVideoResponse.generatedSamples[0].video.uri // empty')
+
+              if [ -z "$VIDEO_URI" ]; then
+                echo "ERROR: Video URI not found."
+                echo "$STATUS" | jq .
+                exit 1
+              fi
+
+              echo "Video generated successfully."
+
+              curl -L \
+                -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+                "$VIDEO_URI" \
+                -o youtube-video.mp4
+
+              break
+            fi
+
+            if [ "$i" = "60" ]; then
+              echo "ERROR: Video generation timed out."
+              exit 1
+            fi
+
+          done
+
+      - name: Check generated video
         run: |
-          cat > generate_voice.py <<'PY'
-          import asyncio
-          import edge_tts
+          ls -lh youtube-video.mp4
+          file youtube-video.mp4
 
-          async def main():
-              with open("script.txt", "r", encoding="utf-8") as file:
-                  text = file.read()
-
-              communicator = edge_tts.Communicate(
-                  text,
-                  "hi-IN-MadhurNeural"
-              )
-
-              await communicator.save("voice.mp3")
-
-              print("Hindi voice generated successfully.")
-
-          asyncio.run(main())
-          PY
-
-          python generate_voice.py
-
-      - name: Save Files
-        uses: actions/upload-artifact@v4
+      - name: Upload video artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: youtube-video-assets
-          path: |
-            script.txt
-            voice.mp3
-
-      - name: Complete
-        run: |
-          echo "YouTube automation completed successfully!"
-          echo "Script and voice files are ready."
+          name: youtube-video
+          path: youtube-video.mp4
+          if-no-files-found: error
+          retention-days: 7
