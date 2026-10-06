@@ -2,16 +2,27 @@ name: YouTube Automation
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 9 * * *"
 
 jobs:
-  test:
+  generate-script:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Start automation
-        run: echo "YouTube automation is running!"
+      - name: Generate AI Script
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          RESPONSE=$(curl -s \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent" \
+            -H "x-goog-api-key: $GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d '{
+              "contents": [{
+                "parts": [{
+                  "text": "Write a short, exciting Hindi YouTube video script about an interesting mystery. Give only the script."
+                }]
+              }]
+            }')
 
-      - name: Check date
-        run: date
+          echo "$RESPONSE"
