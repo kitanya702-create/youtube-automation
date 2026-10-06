@@ -1,0 +1,17 @@
+name: YouTube Automation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * *"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Start automation
+        run: echo "YouTube automation is running!"
+
+      - name: Check date
+        run: date
