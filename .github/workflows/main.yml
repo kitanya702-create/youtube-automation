@@ -2,126 +2,105 @@ name: YouTube Automation
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
   generate-script:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install edge-tts requests
+
       - name: Generate AI Script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          set -e
+          python - <<'PY'
+          import os
+          import time
+          import requests
 
-          echo "Starting AI script generation..."
+          api_key = os.environ["GEMINI_API_KEY"]
 
-          PROMPT='Write a short, exciting Hindi YouTube video script about an interesting mystery.
+          models = [
+              "gemini-3.7-flash",
+              "gemini-3.6-flash"
+          ]
+
+          prompt = """
+          Create a short YouTube Shorts script in Hindi.
+
+          Topic: Interesting facts about space.
 
           Requirements:
-          - Language: Hindi
-          - Length: around 500-700 words
-          - Start with a strong hook
-          - Keep the story interesting and suspenseful
-          - Use simple spoken Hindi
-          - Do not include markdown
-          - Do not include headings like "Introduction" or "Conclusion"
-          - End with a strong call to action to subscribe'
+          - 45 to 60 seconds
+          - Hindi language
+          - Strong hook in the first sentence
+          - Interesting and easy to understand
+          - No headings
+          - No emojis
+          - End with a short call to action
+          """
 
-          MODELS=("gemini-3.7-flash" "gemini-3.6-flash" "gemini-3.5-flash-lite")
+          script = None
 
-          SUCCESS=false
+          for model in models:
+              for attempt in range(5):
+                  print(f"Trying {model}, attempt {attempt + 1}")
 
-          for MODEL in "${MODELS[@]}"; do
+                  url = (
+                      f"https://generativelanguage.googleapis.com/v1beta/"
+                      f"models/{model}:generateContent?key={api_key}"
+                  )
 
-            echo "Trying model: $MODEL"
-
-            for ATTEMPT in 1 2 3 4 5; do
-
-              echo "Attempt $ATTEMPT for $MODEL..."
-
-              HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
-                "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
-                -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-                -H "Content-Type: application/json" \
-                -X POST \
-                -d "$(jq -n \
-                  --arg prompt "$PROMPT" \
-                  '{
-                    contents: [
-                      {
-                        parts: [
+                  data = {
+                      "contents": [
                           {
-                            text: $prompt
+                              "parts": [
+                                  {"text": prompt}
+                              ]
                           }
-                        ]
-                      }
-                    ],
-                    generationConfig: {
-                      temperature: 0.8,
-                      maxOutputTokens: 1500
-                    }
-                  }'
-                )")
+                      ]
+                  }
 
-              echo "HTTP Status: $HTTP_CODE"
+                  try:
+                      response = requests.post(
+                          url,
+                          json=data,
+                          timeout=60
+                      )
 
-              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+                      print("HTTP Status:", response.status_code)
 
-                SCRIPT=$(jq -r '.candidates[0].content.parts[0].text // empty' response.json)
+                      if response.status_code == 200:
+                          result = response.json()
+                          script = result["candidates"][0]["content"]["parts"][0]["text"]
+                          print("SUCCESS!")
+                          print(script)
+                          break
 
-                if [ -n "$SCRIPT" ]; then
-                  echo "$SCRIPT" > script.txt
+                      print("Temporary API error.")
+                      time.sleep(15 * (attempt + 1))
 
-                  echo "SUCCESS!"
-                  echo "Script generated using $MODEL"
+                  except Exception as e:
+                      print("Error:", e)
+                      time.sleep(15)
 
-                  echo "----- SCRIPT PREVIEW -----"
-                  head -c 1000 script.txt
-                  echo
-                  echo "--------------------------"
-
-                  SUCCESS=true
+              if script:
                   break
-                fi
 
-                echo "Response did not contain script."
-
-              elif [ "$HTTP_CODE" -eq 429 ] || [ "$HTTP_CODE" -eq 500 ] || [ "$HTTP_CODE" -eq 502 ] || [ "$HTTP_CODE" -eq 503 ] || [ "$HTTP_CODE" -eq 504 ]; then
-
-                WAIT=$((ATTEMPT * 15))
-
-                echo "Temporary API error."
-                echo "Waiting $WAIT seconds before retry..."
-                sleep "$WAIT"
-
-              else
-
-                echo "Non-retryable error:"
-                cat response.json
-                break
-
-              fi
-
-            done
-
-            if [ "$SUCCESS" = true ]; then
-              break
-            fi
-
-            echo "Model $MODEL failed. Trying next model..."
-
-          done
-
-          if [ "$SUCCESS" != true ]; then
-            echo "ERROR: Gemini could not generate the script."
-            echo "Last response:"
-            cat response.json
-            exit 1
-          fi
-
-      - name: Save Script
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtube-script
-          path: script.txt
+          if not script:
+             
