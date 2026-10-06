@@ -1,12 +1,12 @@
-name: YouTube Video Automation
+name: Free YouTube Automation
 
 on:
   workflow_dispatch:
     inputs:
-      prompt:
-        description: "Video prompt"
+      topic:
+        description: "Video topic"
         required: true
-        default: "A cinematic futuristic city at night, neon lights, flying cars, realistic camera movement, dramatic atmosphere"
+        default: "5 amazing facts about space"
 
 jobs:
   generate-video:
@@ -16,113 +16,82 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Install FFmpeg and TTS
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl
+          sudo apt-get install -y ffmpeg espeak-ng jq curl
 
-      - name: Generate Veo video
+      - name: Generate AI script
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          VIDEO_PROMPT: ${{ inputs.prompt }}
+          TOPIC: ${{ inputs.topic }}
         run: |
           set -e
 
-          BASE_URL="https://generativelanguage.googleapis.com/v1beta"
+          PROMPT="Write a short YouTube Shorts narration about: ${TOPIC}
 
-          echo "Starting Veo 3.1 generation..."
+          Requirements:
+          - 120 to 150 words
+          - Hindi language
+          - Start with a strong hook
+          - Simple spoken Hindi
+          - No markdown
+          - No title
+          - No emojis
+          - End with a short call to action."
 
-          RESPONSE=$(curl -sS \
+          RESPONSE=$(jq -n \
+            --arg prompt "$PROMPT" \
+            '{
+              contents: [
+                {
+                  parts: [
+                    {
+                      text: $prompt
+                    }
+                  ]
+                }
+              ]
+            }')
+
+          RESULT=$(curl -sS \
             -X POST \
-            "${BASE_URL}/models/veo-3.1-generate-preview:predictLongRunning" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent" \
             -H "x-goog-api-key: ${GEMINI_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n \
-              --arg prompt "$VIDEO_PROMPT" \
-              '{
-                instances: [
-                  {
-                    prompt: $prompt
-                  }
-                ],
-                parameters: {
-                  aspectRatio: "9:16",
-                  resolution: "720p"
-                }
-              }'
-            )")
+            -d "$RESPONSE")
 
-          echo "API response:"
-          echo "$RESPONSE" | jq .
+          echo "$RESULT" | jq .
 
-          OPERATION_NAME=$(echo "$RESPONSE" | jq -r '.name // empty')
+          SCRIPT=$(echo "$RESULT" | jq -r \
+            '.candidates[0].content.parts[0].text // empty')
 
-          if [ -z "$OPERATION_NAME" ]; then
-            echo "ERROR: Veo operation was not created."
+          if [ -z "$SCRIPT" ]; then
+            echo "AI script generation failed."
             exit 1
           fi
 
-          echo "Operation: $OPERATION_NAME"
+          echo "$SCRIPT" > script.txt
 
-          echo "Waiting for video..."
+          echo "Generated script:"
+          cat script.txt
 
-          for i in {1..60}; do
-
-            sleep 10
-
-            STATUS=$(curl -sS \
-              -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-              "${BASE_URL}/${OPERATION_NAME}")
-
-            DONE=$(echo "$STATUS" | jq -r '.done // false')
-
-            echo "Check $i/60 - done=$DONE"
-
-            if [ "$DONE" = "true" ]; then
-
-              ERROR=$(echo "$STATUS" | jq -r '.error.message // empty')
-
-              if [ -n "$ERROR" ]; then
-                echo "Veo generation failed:"
-                echo "$ERROR"
-                exit 1
-              fi
-
-              VIDEO_URI=$(echo "$STATUS" | jq -r \
-                '.response.generateVideoResponse.generatedSamples[0].video.uri // empty')
-
-              if [ -z "$VIDEO_URI" ]; then
-                echo "ERROR: Video URI not found."
-                echo "$STATUS" | jq .
-                exit 1
-              fi
-
-              echo "Video generated successfully."
-
-              curl -L \
-                -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-                "$VIDEO_URI" \
-                -o youtube-video.mp4
-
-              break
-            fi
-
-            if [ "$i" = "60" ]; then
-              echo "ERROR: Video generation timed out."
-              exit 1
-            fi
-
-          done
-
-      - name: Check generated video
+      - name: Create voice
         run: |
-          ls -lh youtube-video.mp4
-          file youtube-video.mp4
+          set -e
 
-      - name: Upload video artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: youtube-video
-          path: youtube-video.mp4
-          if-no-files-found: error
-          retention-days: 7
+          espeak-ng \
+            -v hi \
+            -s 145 \
+            -p 45 \
+            -a 150 \
+            -f script.txt \
+            -w voice.wav
+
+          ls -lh voice.wav
+
+      - name: Create video background
+        run: |
+          set -e
+
+          DURATION=$(ff
