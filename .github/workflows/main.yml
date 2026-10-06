@@ -1,97 +1,58 @@
-name: Free YouTube Automation
+- name: Generate AI script
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  run: |
+    set -e
 
-on:
-  workflow_dispatch:
-    inputs:
-      topic:
-        description: "Video topic"
-        required: true
-        default: "5 amazing facts about space"
+    echo "Generating AI script..."
 
-jobs:
-  generate-video:
-    runs-on: ubuntu-latest
+    python3 - <<'PY'
+    import os
+    import json
+    import urllib.request
+    import urllib.error
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    api_key = os.environ.get("OPENAI_API_KEY")
 
-      - name: Install FFmpeg and TTS
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg espeak-ng jq curl
+    if not api_key:
+        raise SystemExit("OPENAI_API_KEY नहीं मिली")
 
-      - name: Generate AI script
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          TOPIC: ${{ inputs.topic }}
-        run: |
-          set -e
+    payload = {
+        "model": "gpt-5.6",
+        "input": "हिंदी में एक छोटा, engaging और natural video voice-over script लिखो। केवल script दो, कोई heading या explanation नहीं।"
+    }
 
-          PROMPT="Write a short YouTube Shorts narration about: ${TOPIC}
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + api_key
+        },
+        method="POST"
+    )
 
-          Requirements:
-          - 120 to 150 words
-          - Hindi language
-          - Start with a strong hook
-          - Simple spoken Hindi
-          - No markdown
-          - No title
-          - No emojis
-          - End with a short call to action."
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error = e.read().decode("utf-8")
+        print("OpenAI API Error:")
+        print(error)
+        raise SystemExit(1)
 
-          RESPONSE=$(jq -n \
-            --arg prompt "$PROMPT" \
-            '{
-              contents: [
-                {
-                  parts: [
-                    {
-                      text: $prompt
-                    }
-                  ]
-                }
-              ]
-            }')
+    script = result.get("output_text", "").strip()
 
-          RESULT=$(curl -sS \
-            -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent" \
-            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$RESPONSE")
+    if not script:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        raise SystemExit("AI script generate नहीं हुई")
 
-          echo "$RESULT" | jq .
+    print("Script generated successfully.")
 
-          SCRIPT=$(echo "$RESULT" | jq -r \
-            '.candidates[0].content.parts[0].text // empty')
+    with open("script.txt", "w", encoding="utf-8") as f:
+        f.write(script)
 
-          if [ -z "$SCRIPT" ]; then
-            echo "AI script generation failed."
-            exit 1
-          fi
+    print(script)
+    PY
 
-          echo "$SCRIPT" > script.txt
-
-          echo "Generated script:"
-          cat script.txt
-
-      - name: Create voice
-        run: |
-          set -e
-
-          espeak-ng \
-            -v hi \
-            -s 145 \
-            -p 45 \
-            -a 150 \
-            -f script.txt \
-            -w voice.wav
-
-          ls -lh voice.wav
-
-      - name: Create video background
-        run: |
-          set -e
-
-          DURATION=$(ff
+    echo "AI script saved to script.txt"
