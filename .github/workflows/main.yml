@@ -2,9 +2,6 @@ name: YouTube Automation
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   generate-script:
@@ -76,4 +73,84 @@ jobs:
                       "contents": [
                           {
                               "parts": [
-                                 
+                                  {
+                                      "text": prompt
+                                  }
+                              ]
+                          }
+                      ]
+                  }
+
+                  try:
+                      response = requests.post(
+                          url,
+                          json=payload,
+                          timeout=60
+                      )
+
+                      print("HTTP Status:", response.status_code)
+
+                      if response.status_code == 200:
+                          data = response.json()
+                          script = data["candidates"][0]["content"]["parts"][0]["text"]
+                          print("SUCCESS!")
+                          break
+
+                      print("API error. Retrying...")
+                      time.sleep(10)
+
+                  except Exception as error:
+                      print("Request error:", error)
+                      time.sleep(10)
+
+              if script:
+                  break
+
+          if not script:
+              raise Exception("AI script generation failed.")
+
+          with open("script.txt", "w", encoding="utf-8") as file:
+              file.write(script)
+
+          print("Script saved successfully.")
+          print(script)
+          PY
+
+          python generate_ai.py
+
+      - name: Generate Hindi Voice
+        run: |
+          cat > generate_voice.py <<'PY'
+          import asyncio
+          import edge_tts
+
+          async def main():
+              with open("script.txt", "r", encoding="utf-8") as file:
+                  text = file.read()
+
+              communicator = edge_tts.Communicate(
+                  text,
+                  "hi-IN-MadhurNeural"
+              )
+
+              await communicator.save("voice.mp3")
+
+              print("Hindi voice generated successfully.")
+
+          asyncio.run(main())
+          PY
+
+          python generate_voice.py
+
+      - name: Save Files
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-video-assets
+          path: |
+            script.txt
+            voice.mp3
+
+      - name: Complete
+        run: |
+          echo "YouTube automation completed successfully!"
+          echo "Script and voice files are ready."
