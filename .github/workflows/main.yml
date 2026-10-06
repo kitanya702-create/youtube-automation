@@ -12,42 +12,116 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          for attempt in 1 2 3 4 5
-          do
-            echo "Attempt $attempt..."
+          set -e
 
-            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" \
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent" \
-              -H "x-goog-api-key: $GEMINI_API_KEY" \
-              -H "Content-Type: application/json" \
-              -X POST \
-              -d '{
-                "contents": [{
-                  "parts": [{
-                    "text": "Write a short, exciting Hindi YouTube video script about an interesting mystery. Give only the script."
-                  }]
-                }]
-              }')
+          echo "Starting AI script generation..."
 
-            echo "HTTP Status: $HTTP_CODE"
-            cat response.json
-            jq -r '.candidates[0].content.parts[0].text' response.json > script.txt
-            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-              echo "SUCCESS!"
+          PROMPT='Write a short, exciting Hindi YouTube video script about an interesting mystery.
+
+          Requirements:
+          - Language: Hindi
+          - Length: around 500-700 words
+          - Start with a strong hook
+          - Keep the story interesting and suspenseful
+          - Use simple spoken Hindi
+          - Do not include markdown
+          - Do not include headings like "Introduction" or "Conclusion"
+          - End with a strong call to action to subscribe'
+
+          MODELS=("gemini-3.7-flash" "gemini-3.6-flash" "gemini-3.5-flash-lite")
+
+          SUCCESS=false
+
+          for MODEL in "${MODELS[@]}"; do
+
+            echo "Trying model: $MODEL"
+
+            for ATTEMPT in 1 2 3 4 5; do
+
+              echo "Attempt $ATTEMPT for $MODEL..."
+
+              HTTP_CODE=$(curl -sS -o response.json -w "%{http_code}" \
+                "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
+                -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -X POST \
+                -d "$(jq -n \
+                  --arg prompt "$PROMPT" \
+                  '{
+                    contents: [
+                      {
+                        parts: [
+                          {
+                            text: $prompt
+                          }
+                        ]
+                      }
+                    ],
+                    generationConfig: {
+                      temperature: 0.8,
+                      maxOutputTokens: 1500
+                    }
+                  }'
+                )")
+
+              echo "HTTP Status: $HTTP_CODE"
+
+              if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+
+                SCRIPT=$(jq -r '.candidates[0].content.parts[0].text // empty' response.json)
+
+                if [ -n "$SCRIPT" ]; then
+                  echo "$SCRIPT" > script.txt
+
+                  echo "SUCCESS!"
+                  echo "Script generated using $MODEL"
+
+                  echo "----- SCRIPT PREVIEW -----"
+                  head -c 1000 script.txt
+                  echo
+                  echo "--------------------------"
+
+                  SUCCESS=true
+                  break
+                fi
+
+                echo "Response did not contain script."
+
+              elif [ "$HTTP_CODE" -eq 429 ] || [ "$HTTP_CODE" -eq 500 ] || [ "$HTTP_CODE" -eq 502 ] || [ "$HTTP_CODE" -eq 503 ] || [ "$HTTP_CODE" -eq 504 ]; then
+
+                WAIT=$((ATTEMPT * 15))
+
+                echo "Temporary API error."
+                echo "Waiting $WAIT seconds before retry..."
+                sleep "$WAIT"
+
+              else
+
+                echo "Non-retryable error:"
+                cat response.json
+                break
+
+              fi
+
+            done
+
+            if [ "$SUCCESS" = true ]; then
               break
             fi
 
-            if [ "$HTTP_CODE" -eq 503 ] || [ "$HTTP_CODE" -eq 429 ] || [ "$HTTP_CODE" -ge 500 ]; then
-              WAIT=$((attempt * 10))
-              echo "Temporary error. Waiting ${WAIT} seconds..."
-              sleep $WAIT
-            else
-              echo "Non-retryable error."
-              exit 1
-            fi
+            echo "Model $MODEL failed. Trying next model..."
+
           done
 
-          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Gemini request failed after 5 attempts."
+          if [ "$SUCCESS" != true ]; then
+            echo "ERROR: Gemini could not generate the script."
+            echo "Last response:"
+            cat response.json
             exit 1
           fi
+
+      - name: Save Script
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-script
+          path: script.txt
