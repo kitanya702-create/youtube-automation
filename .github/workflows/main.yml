@@ -28,79 +28,52 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python - <<'PY'
+          cat > generate_ai.py <<'PY'
           import os
           import time
           import requests
 
-          api_key = os.environ["GEMINI_API_KEY"]
+          api_key = os.environ.get("GEMINI_API_KEY")
+
+          if not api_key:
+              raise Exception("GEMINI_API_KEY secret is missing.")
+
+          prompt = """Create a 45 to 60 second YouTube Shorts script in Hindi.
+
+          Topic: Interesting facts about space.
+
+          Rules:
+          - Start with a strong hook.
+          - Use simple Hindi.
+          - Make it interesting and engaging.
+          - No headings.
+          - No emojis.
+          - End with a short call to action.
+          """
 
           models = [
               "gemini-3.7-flash",
               "gemini-3.6-flash"
           ]
 
-          prompt = """
-          Create a short YouTube Shorts script in Hindi.
-
-          Topic: Interesting facts about space.
-
-          Requirements:
-          - 45 to 60 seconds
-          - Hindi language
-          - Strong hook in the first sentence
-          - Interesting and easy to understand
-          - No headings
-          - No emojis
-          - End with a short call to action
-          """
-
           script = None
 
           for model in models:
+              print("Trying model:", model)
+
               for attempt in range(5):
-                  print(f"Trying {model}, attempt {attempt + 1}")
+                  print("Attempt:", attempt + 1)
 
                   url = (
-                      f"https://generativelanguage.googleapis.com/v1beta/"
-                      f"models/{model}:generateContent?key={api_key}"
+                      "https://generativelanguage.googleapis.com/v1beta/"
+                      + "models/"
+                      + model
+                      + ":generateContent?key="
+                      + api_key
                   )
 
-                  data = {
+                  payload = {
                       "contents": [
                           {
                               "parts": [
-                                  {"text": prompt}
-                              ]
-                          }
-                      ]
-                  }
-
-                  try:
-                      response = requests.post(
-                          url,
-                          json=data,
-                          timeout=60
-                      )
-
-                      print("HTTP Status:", response.status_code)
-
-                      if response.status_code == 200:
-                          result = response.json()
-                          script = result["candidates"][0]["content"]["parts"][0]["text"]
-                          print("SUCCESS!")
-                          print(script)
-                          break
-
-                      print("Temporary API error.")
-                      time.sleep(15 * (attempt + 1))
-
-                  except Exception as e:
-                      print("Error:", e)
-                      time.sleep(15)
-
-              if script:
-                  break
-
-          if not script:
-             
+                                 
