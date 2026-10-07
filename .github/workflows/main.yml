@@ -33,7 +33,7 @@ jobs:
           set -e
 
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "ERROR: GEMINI_API_KEY secret nahi mila. GitHub Settings me add karein."
+            echo "ERROR: GEMINI_API_KEY secret nahi mila. Settings -> Secrets me add karein."
             exit 1
           fi
 
@@ -51,14 +51,14 @@ jobs:
           )
 
           response = client.models.generate_content(
-              model="gemini-2.5-flash",
+              model="gemini-2.0-flash",
               contents=prompt,
           )
 
           script = response.text.strip()
 
           if not script:
-              raise RuntimeError("Gemini ne khali script generate ki.")
+              raise RuntimeError("Gemini ne khali script di.")
 
           with open("script.txt", "w", encoding="utf-8") as f:
               f.write(script)
