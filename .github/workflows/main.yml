@@ -21,44 +21,49 @@ jobs:
 
           python3 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install google-genai edge-tts
+          .venv/bin/pip install groq edge-tts
 
           echo "FFmpeg installed successfully."
           ffmpeg -version | head -1
 
-      - name: Generate AI script (100% Free Gemini)
+      - name: Generate AI script (Free Groq Llama 3)
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           set -e
 
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "ERROR: GEMINI_API_KEY secret nahi mila. Settings -> Secrets me add karein."
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "ERROR: GROQ_API_KEY secret nahi mila. GitHub Settings me add karein."
             exit 1
           fi
 
           .venv/bin/python <<'PY'
           import os
-          from google import genai
+          from groq import Groq
 
-          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
           prompt = (
-              "You write short, engaging Hindi scripts for YouTube Shorts. "
-              "Write a 30 to 40-second engaging Hindi script with a strong hook at the start and a memorable ending. "
-              "Return only the spoken Hindi voice-over text in Devanagari script. "
-              "Do not include headings, scene descriptions, sound effects, markdown asterisks, or emojis."
+              "Write a short, engaging 30-40 second Hindi script for YouTube Shorts. "
+              "Topic: An interesting motivational or mind-blowing psychology fact. "
+              "Output ONLY the Hindi speech text in Devanagari script. "
+              "Do not include English, markdown, emojis, scene notes, or titles. Just pure spoken words."
           )
 
-          response = client.models.generate_content(
-              model="gemini-3.0-flash",
-              contents=prompt,
+          chat_completion = client.chat.completions.create(
+              messages=[
+                  {
+                      "role": "user",
+                      "content": prompt,
+                  }
+              ],
+              model="llama-3.3-70b-versatile",
           )
 
-          script = response.text.strip()
+          script = chat_completion.choices[0].message.content.strip()
 
           if not script:
-              raise RuntimeError("Gemini ne khali script di.")
+              raise RuntimeError("Script generate nahi hui.")
 
           with open("script.txt", "w", encoding="utf-8") as f:
               f.write(script)
