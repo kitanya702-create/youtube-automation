@@ -20,50 +20,45 @@ jobs:
           sudo apt-get install -y ffmpeg python3 python3-venv
 
           python3 -m venv .venv
-
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install openai edge-tts
+          .venv/bin/pip install google-genai edge-tts
 
-          echo "FFmpeg installed:"
+          echo "FFmpeg installed successfully."
           ffmpeg -version | head -1
 
-      - name: Generate AI script
+      - name: Generate AI script (100% Free Gemini)
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -e
 
-          if [ -z "$OPENAI_API_KEY" ]; then
-            echo "ERROR: OPENAI_API_KEY secret नहीं मिला."
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "ERROR: GEMINI_API_KEY secret nahi mila. GitHub Settings me add karein."
             exit 1
           fi
 
           .venv/bin/python <<'PY'
           import os
-          from openai import OpenAI
+          from google import genai
 
-          client = OpenAI(
-              api_key=os.environ["OPENAI_API_KEY"]
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+          prompt = (
+              "You write short, engaging Hindi scripts for YouTube Shorts. "
+              "Write a 30 to 40-second engaging Hindi script with a strong hook at the start and a memorable ending. "
+              "Return only the spoken Hindi voice-over text in Devanagari script. "
+              "Do not include headings, scene descriptions, sound effects, markdown asterisks, or emojis."
           )
 
-          response = client.responses.create(
-              model="gpt-5.5",
-              instructions=(
-                  "You write short, engaging Hindi scripts for YouTube Shorts. "
-                  "Return only the Hindi voice-over script. "
-                  "Do not add headings, markdown, emojis or explanations."
-              ),
-              input=(
-                  "एक engaging Hindi YouTube Shorts script लिखो। "
-                  "लगभग 30 से 45 सेकंड की हो। "
-                  "शुरुआत में strong hook हो और अंत में memorable line हो।"
-              )
+          response = client.models.generate_content(
+              model="gemini-2.5-flash",
+              contents=prompt,
           )
 
-          script = response.output_text.strip()
+          script = response.text.strip()
 
           if not script:
-              raise RuntimeError("OpenAI ने खाली script दी.")
+              raise RuntimeError("Gemini ne khali script generate ki.")
 
           with open("script.txt", "w", encoding="utf-8") as f:
               f.write(script)
@@ -73,7 +68,7 @@ jobs:
           print("============================")
           PY
 
-      - name: Create Hindi Voice
+      - name: Create Hindi Voice (Edge-TTS)
         run: |
           set -e
 
@@ -83,7 +78,6 @@ jobs:
             --write-media voice.mp3
 
           test -s voice.mp3
-
           echo "Voice created successfully."
           ls -lh voice.mp3
 
@@ -101,6 +95,7 @@ jobs:
 
           echo "Audio duration: ${DURATION} seconds"
 
+          # 1080x1920 vertical black background with audio
           ffmpeg -y \
             -f lavfi \
             -i "color=c=black:s=1080x1920:r=30:d=${DURATION}" \
@@ -115,7 +110,6 @@ jobs:
             video.mp4
 
           test -s video.mp4
-
           echo "Video created successfully."
           ls -lh video.mp4
 
@@ -127,3 +121,4 @@ jobs:
             script.txt
             voice.mp3
             video.mp4
+            
